@@ -351,7 +351,7 @@ func TestClusterApplyKindConfig(t *testing.T) {
 		Product: string(clusterid.ProductKIND),
 		KindV1Alpha4Cluster: &v1alpha4.Cluster{
 			Nodes: []v1alpha4.Node{
-				v1alpha4.Node{Role: "control-plane"},
+				{Role: "control-plane"},
 			},
 		},
 	}
@@ -371,8 +371,8 @@ func TestClusterApplyKindConfig(t *testing.T) {
 		Product: string(clusterid.ProductKIND),
 		KindV1Alpha4Cluster: &v1alpha4.Cluster{
 			Nodes: []v1alpha4.Node{
-				v1alpha4.Node{Role: "control-plane"},
-				v1alpha4.Node{Role: "worker"},
+				{Role: "control-plane"},
+				{Role: "worker"},
 			},
 		},
 	}
@@ -456,6 +456,78 @@ func TestClusterFixKubeConfigInContainer(t *testing.T) {
 	})
 }
 
+func TestClusterApplyRancherDesktop(t *testing.T) {
+	f := newFixture(t)
+	f.setOS("darwin")
+
+	assert.Equal(t, false, f.d4m.started)
+	assert.Equal(t, 1, f.dockerClient.ncpu)
+	f.applyRancherDesktop(3)
+	assert.Equal(t, true, f.d4m.started)
+	assert.Equal(t, 3, f.dockerClient.ncpu)
+}
+
+func TestClusterApplyRancherDesktopLinux(t *testing.T) {
+	f := newFixture(t)
+	f.setOS("linux")
+	f.dockerClient.host = "unix:///Users/nick/.rd/docker.sock"
+
+	assert.Equal(t, false, f.d4m.started)
+	assert.Equal(t, 1, f.dockerClient.ncpu)
+	f.applyRancherDesktop(3)
+	assert.Equal(t, true, f.d4m.started)
+	assert.Equal(t, 3, f.dockerClient.ncpu)
+}
+
+func TestClusterApplyRancherDesktopEngineError(t *testing.T) {
+	f := newFixture(t)
+	f.setOS("linux")
+	f.dockerClient.host = "unix:///var/run/docker.sock"
+
+	cluster := &api.Cluster{
+		Product: "rancher-desktop",
+	}
+	_, err := f.controller.Apply(context.Background(), cluster)
+	require.Error(f.t, err)
+	require.Contains(f.t, err.Error(),
+		"Detected remote DOCKER_HOST. Remote Docker engines do not support Rancher Desktop clusters")
+}
+
+func TestClusterApplyRancherDesktopCPUOnly(t *testing.T) {
+	f := newFixture(t)
+	f.setOS("darwin")
+
+	assert.Equal(t, false, f.d4m.started)
+	assert.Equal(t, 1, f.dockerClient.ncpu)
+	f.applyRancherDesktop(0)
+	assert.Equal(t, false, f.d4m.started)
+	assert.Equal(t, 3, f.dockerClient.ncpu)
+}
+
+func TestClusterApplyRancherDesktopStartClusterOnly(t *testing.T) {
+	f := newFixture(t)
+	f.setOS("darwin")
+
+	assert.Equal(t, false, f.d4m.started)
+	assert.Equal(t, 1, f.dockerClient.ncpu)
+	f.applyRancherDesktop(1)
+	assert.Equal(t, true, f.d4m.started)
+	assert.Equal(t, 1, f.dockerClient.ncpu)
+}
+
+func TestClusterApplyRancherDesktopNoRestart(t *testing.T) {
+	f := newFixture(t)
+	f.setOS("darwin")
+	f.d4m.started = true
+
+	assert.Equal(t, true, f.d4m.started)
+	assert.Equal(t, 1, f.dockerClient.ncpu)
+	f.applyRancherDesktop(0)
+	assert.Equal(t, true, f.d4m.started)
+	assert.Equal(t, 1, f.dockerClient.ncpu)
+	assert.Equal(t, 1, f.d4m.settingsWriteCount)
+}
+
 type fixture struct {
 	t            *testing.T
 	errOut       *bytes.Buffer
@@ -463,6 +535,8 @@ type fixture struct {
 	dockerClient *fakeDockerClient
 	dmachine     *dockerMachine
 	d4m          *fakeD4MClient
+	rmachine     *rancherMachine
+	rdm          RancherManager
 	config       *clientcmdapi.Config
 	configWriter fakeConfigWriter
 	registryCtl  *fakeRegistryController
@@ -475,6 +549,7 @@ func newFixture(t *testing.T) *fixture {
 	osName := "darwin" // default to macos
 	dockerClient := &fakeDockerClient{host: "unix:///home/nick/.docker/desktop/docker.sock", ncpu: 1}
 	d4m := &fakeD4MClient{docker: dockerClient}
+	rdm := &fakeRancherDesktopManager{}
 	dmachine := &dockerMachine{
 		dockerClient: dockerClient,
 		iostreams:    genericclioptions.IOStreams{Out: os.Stdout, ErrOut: os.Stderr},
@@ -482,19 +557,26 @@ func newFixture(t *testing.T) *fixture {
 		d4m:          d4m,
 		os:           osName,
 	}
+	rmachine := &rancherMachine{
+		dockerClient: dockerClient,
+		iostreams:    genericclioptions.IOStreams{Out: os.Stdout, ErrOut: os.Stderr},
+		sleep:        func(d time.Duration) {},
+		rdm:          rdm,
+		os:           osName,
+	}
 	config := &clientcmdapi.Config{
 		CurrentContext: "microk8s",
 		Contexts: map[string]*clientcmdapi.Context{
-			"microk8s": &clientcmdapi.Context{
+			"microk8s": {
 				Cluster: "microk8s-cluster",
 			},
-			"docker-desktop": &clientcmdapi.Context{
+			"docker-desktop": {
 				Cluster: "docker-desktop",
 			},
 		},
 		Clusters: map[string]*clientcmdapi.Cluster{
-			"microk8s-cluster": &clientcmdapi.Cluster{Server: "http://microk8s.localhost/"},
-			"docker-desktop":   &clientcmdapi.Cluster{Server: "http://docker-desktop.localhost/"},
+			"microk8s-cluster": {Server: "http://microk8s.localhost/"},
+			"docker-desktop":   {Server: "http://docker-desktop.localhost/"},
 		},
 	}
 	configLoader := configLoader(func() (clientcmdapi.Config, error) {
@@ -531,6 +613,7 @@ func newFixture(t *testing.T) *fixture {
 		config:                      *config,
 		configWriter:                configWriter,
 		dmachine:                    dmachine,
+		rmachine:                    rmachine,
 		configLoader:                configLoader,
 		clientLoader:                clientLoader,
 		clients:                     make(map[string]kubernetes.Interface),
@@ -546,6 +629,8 @@ func newFixture(t *testing.T) *fixture {
 		controller:   controller,
 		dmachine:     dmachine,
 		d4m:          d4m,
+		rmachine:     rmachine,
+		rdm:          rdm,
 		dockerClient: dockerClient,
 		config:       config,
 		configWriter: configWriter,
@@ -563,9 +648,20 @@ func (f *fixture) apply(product clusterid.Product, cpus int) {
 	require.NoError(f.t, err)
 }
 
+func (f *fixture) applyRancherDesktop(cpus int) {
+	cluster := &api.Cluster{
+		Product:           "rancher-desktop",
+		MinCPUs:           cpus,
+		KubernetesVersion: "1.31.11",
+	}
+	_, err := f.controller.Apply(context.Background(), cluster)
+	require.NoError(f.t, err)
+}
+
 func (f *fixture) setOS(os string) {
 	f.controller.os = os
 	f.dmachine.os = os
+	f.rmachine.os = os
 }
 
 func (f *fixture) newFakeAdmin(p clusterid.Product) *fakeAdmin {
@@ -637,6 +733,7 @@ func (d *fakeDockerClient) ContainerList(ctx context.Context, options container.
 func (d *fakeDockerClient) ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *specs.Platform, containerName string) (container.CreateResponse, error) {
 	return container.CreateResponse{}, nil
 }
+
 func (d *fakeDockerClient) ContainerStart(ctx context.Context, containerID string, options container.StartOptions) error {
 	return nil
 }
@@ -702,7 +799,6 @@ func (c *fakeD4MClient) ensureMinCPU(settings map[string]interface{}, desired in
 	}
 	settings["cpu"] = desired
 	return true, nil
-
 }
 
 func (c *fakeD4MClient) ResetCluster(ctx context.Context) error {
@@ -810,4 +906,49 @@ func (w fakeConfigWriter) DeleteContext(name string) error {
 func (w fakeConfigWriter) SetConfig(name, value string) error {
 	w.opts[name] = value
 	return nil
+}
+
+type fakeRancherDesktopManager struct {
+	lastCluster *api.Cluster
+	started     bool
+	resetCount  int
+	status      map[string]interface{}
+}
+
+func (f *fakeRancherDesktopManager) Status(ctx context.Context) (map[string]interface{}, error) {
+	if f.status == nil {
+		f.status = map[string]interface{}{
+			"vm": map[string]interface{}{
+				"state": "running",
+				"kubernetes": map[string]interface{}{
+					"state": "running",
+				},
+			},
+		}
+	}
+	return f.status, nil
+}
+
+func (f *fakeRancherDesktopManager) Start(ctx context.Context, cluster *api.Cluster) error {
+	f.lastCluster = cluster
+	f.started = true
+	return nil
+}
+
+func (f *fakeRancherDesktopManager) ResetCluster(ctx context.Context) error {
+	f.resetCount++
+	return nil
+}
+
+func (f *fakeRancherDesktopManager) Shutdown(ctx context.Context) error {
+	f.started = false
+	return nil
+}
+
+func (f *fakeRancherDesktopManager) SetSetting(ctx context.Context, key string, value interface{}) error {
+	return nil
+}
+
+func (f *fakeRancherDesktopManager) IsKubernetesRunning(ctx context.Context) (bool, error) {
+	return f.started, nil
 }

@@ -39,6 +39,7 @@ import (
 	"github.com/tilt-dev/ctlptl/internal/socat"
 	"github.com/tilt-dev/ctlptl/pkg/api"
 	"github.com/tilt-dev/ctlptl/pkg/docker"
+	"github.com/tilt-dev/ctlptl/pkg/rancher"
 	"github.com/tilt-dev/ctlptl/pkg/registry"
 
 	// Client auth plugins! They will auto-init if we import them.
@@ -91,6 +92,7 @@ type Controller struct {
 	admins                      map[clusterid.Product]Admin
 	dockerCLI                   dctr.CLI
 	dmachine                    *dockerMachine
+	rmachine                    *rancherMachine
 	configLoader                configLoader
 	configWriter                configWriter
 	registryCtl                 registryController
@@ -207,6 +209,9 @@ func (c *Controller) machine(ctx context.Context, name string, product clusterid
 			c.dmachine = machine
 		}
 		return newMinikubeMachine(c.iostreams, c.runner, name, c.dmachine), nil
+	
+	case "rancher-desktop":
+		return NewRancherMachine(ctx, dockerCLI.Client(), c.iostreams)
 	}
 
 	return unknownMachine{product: product}, nil
@@ -259,6 +264,16 @@ func (c *Controller) admin(ctx context.Context, product clusterid.Product) (Admi
 		admin = newK3DAdmin(c.iostreams, c.runner)
 	case clusterid.ProductMinikube:
 		admin = newMinikubeAdmin(c.iostreams, dockerCLI.Client(), c.runner)
+	case "rancher-desktop": // TODO: Use clusterid.ProductRancherDesktop when available
+		if !rancher.IsLocalRancherDesktop(dockerCLI.Client().DaemonHost(), c.os) {
+			return nil, fmt.Errorf("Detected remote DOCKER_HOST. Remote Docker engines do not support Rancher Desktop clusters: %s",
+				dockerCLI.Client().DaemonHost())
+		}
+		rdm, err := NewRancherDesktopManager()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Rancher Desktop manager: %v", err)
+		}
+		admin = newRancherDesktopAdmin(dockerCLI.Client().DaemonHost(), c.os, rdm)
 	}
 
 	if product == "" {
@@ -429,6 +444,7 @@ func (c *Controller) populateClusterSpec(ctx context.Context, cluster *api.Clust
 	cluster.KindV1Alpha4Cluster = spec.KindV1Alpha4Cluster
 	cluster.Minikube = spec.Minikube
 	cluster.K3D = spec.K3D
+	// Note: Rancher Desktop doesn't have a specific config struct, so no need to copy it
 	return nil
 }
 
@@ -469,6 +485,7 @@ func (c *Controller) populateCluster(ctx context.Context, cluster *api.Cluster) 
 	// If this looks like it might be running on a remote Docker instance,
 	// ensure the socat tunnel is running. It's semantically odd that 'ctlptl get'
 	// creates a persistent tunnel, but is probably closer to what users expect.
+	// Note: Rancher Desktop runs locally, so it doesn't need socat tunneling.
 	name := cluster.Name
 	product := clusterid.Product(cluster.Product)
 	if product == clusterid.ProductKIND || product == clusterid.ProductK3D || product == clusterid.ProductMinikube {
@@ -478,6 +495,7 @@ func (c *Controller) populateCluster(ctx context.Context, cluster *api.Cluster) 
 			klog.V(4).Infof("WARNING: connecting socat tunnel to cluster %s: %v\n", name, err)
 		}
 	}
+	// Note: Rancher Desktop doesn't need socat tunneling as it runs locally
 
 	client, err := c.client(cluster.Name)
 	if err != nil {
@@ -559,10 +577,12 @@ func FillDefaults(cluster *api.Cluster) {
 // TODO(nick): Add more registry-supporting clusters.
 func supportsRegistry(product clusterid.Product) bool {
 	return product == clusterid.ProductKIND || product == clusterid.ProductMinikube || product == clusterid.ProductK3D
+	// TODO: Enable registry support for Rancher Desktop once implemented
+	// || product == "rancher-desktop"
 }
 
 func supportsKubernetesVersion(product clusterid.Product, version string) bool {
-	return product == clusterid.ProductKIND || product == clusterid.ProductMinikube
+	return product == clusterid.ProductKIND || product == clusterid.ProductMinikube || product == "rancher-desktop"
 }
 
 func (c *Controller) canReconcileK8sVersion(ctx context.Context, desired, existing *api.Cluster) bool {
@@ -574,8 +594,8 @@ func (c *Controller) canReconcileK8sVersion(ctx context.Context, desired, existi
 		return true
 	}
 
-	// On KIND, it's ok if the patch doesn't match.
-	if clusterid.Product(desired.Product) == clusterid.ProductKIND {
+	// On KIND and Rancher Desktop, it's ok if the patch doesn't match.
+	if clusterid.Product(desired.Product) == clusterid.ProductKIND || clusterid.Product(desired.Product) == "rancher-desktop" {
 		dv, err := semver.ParseTolerant(desired.KubernetesVersion)
 		if err != nil {
 			return false
@@ -654,6 +674,12 @@ func (c *Controller) ensureRegistryExistsForCluster(ctx context.Context, desired
 		// with these labels.
 		regLabels["app"] = "k3d"
 		regLabels["k3d.role"] = "registry"
+			// TODO: Add Rancher Desktop registry support once implemented
+		// } else if desired.Product == "rancher-desktop" {
+		// 	// Rancher Desktop registries don't need special labels
+		// 	// but we'll add a label for identification
+		// 	regLabels["app"] = "rancher-desktop"
+		// }
 	}
 
 	regCtl, err := c.registryController(ctx)
@@ -689,6 +715,8 @@ func (c *Controller) Apply(ctx context.Context, desired *api.Cluster) (*api.Clus
 	if desired.K3D != nil && clusterid.Product(desired.Product) != clusterid.ProductK3D {
 		return nil, fmt.Errorf("k3d config may only be set on clusters with product: k3d. Actual product: %s", desired.Product)
 	}
+	// Note: Rancher Desktop doesn't have a specific config struct like KIND, Minikube, or K3D
+	// All configuration is done through the main Cluster fields like MinCPUs and KubernetesVersion
 
 	FillDefaults(desired)
 
@@ -783,6 +811,7 @@ func (c *Controller) Apply(ctx context.Context, desired *api.Cluster) (*api.Clus
 	if needsCreate {
 		// If the cluster apiserver is in a remote docker cluster,
 		// set up a portforwarder.
+		// Note: Rancher Desktop runs locally, so it doesn't need port forwarding.
 		err := c.maybeCreateForwarderForCurrentCluster(ctx, c.iostreams.ErrOut)
 		if err != nil {
 			return nil, err
@@ -1017,6 +1046,7 @@ func (c *Controller) List(ctx context.Context, options ListOptions) (*api.Cluste
 
 // If the current cluster is on a remote docker instance,
 // we need a port-forwarder to connect it.
+// Note: Rancher Desktop runs locally, so it doesn't need port forwarding.
 func (c *Controller) maybeCreateForwarderForCurrentCluster(ctx context.Context, errOut io.Writer) error {
 	dockerCLI, err := c.getDockerCLI(ctx)
 	if err != nil {
@@ -1041,7 +1071,7 @@ func (c *Controller) maybeCreateForwarderForCurrentCluster(ctx context.Context, 
 	return socat.ConnectRemoteDockerPort(ctx, port)
 }
 
-// Docker-Desktop may be slow to write the kubernetes context
+// Docker-Desktop and Rancher Desktop may be slow to write the kubernetes context
 // back to the config, so we have to wait until it appears.
 func (c *Controller) waitForContextCreate(ctx context.Context, cluster *api.Cluster) error {
 	refreshAndCheckOK := func() error {
@@ -1080,6 +1110,7 @@ func (c *Controller) waitForContextCreate(ctx context.Context, cluster *api.Clus
 //
 // After the cluster is created, we poll the kubeconfig until
 // the cluster context has been created and the cluster becomes healthy.
+// This applies to KIND, K3D, Minikube, Docker Desktop, and Rancher Desktop.
 //
 // https://github.com/tilt-dev/ctlptl/issues/87
 // https://github.com/tilt-dev/ctlptl/issues/131
@@ -1132,6 +1163,7 @@ func (c *Controller) waitForHealthCheckAfterCreate(ctx context.Context, cluster 
 // the cluster from a container attached to the same network as the cluster, if
 // currently running inside a container and the cluster admin object supports
 // the modifications.
+// Note: Rancher Desktop runs locally, so it doesn't need this modification.
 func (c *Controller) maybeFixKubeConfigInsideContainer(ctx context.Context, cluster *api.Cluster) error {
 	containerID := insideContainer(ctx, c.dockerCLI.Client())
 	if containerID == "" {

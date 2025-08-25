@@ -1,0 +1,6 @@
+apiVersion: ctlptl.dev/v1alpha1
+kind: Cluster
+name: rancher-desktop-advanced
+product: rancher-desktop
+minCPUs: 4
+kubernetesVersion: 1.31.11

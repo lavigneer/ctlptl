@@ -1,0 +1,7 @@
+apiVersion: ctlptl.dev/v1alpha1
+kind: Cluster
+name: rancher-desktop-default
+product: rancher-desktop
+minCPUs: 4
+
+

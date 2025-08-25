@@ -34,6 +34,8 @@ func normalizedGet(ctx context.Context, controller clusterGetter, name string) (
 		retryName = clusterid.ProductKIND.DefaultClusterName()
 	} else if name == string(clusterid.ProductK3D) {
 		retryName = clusterid.ProductK3D.DefaultClusterName()
+	} else if name == "rancher-desktop" {
+		retryName = "rancher-desktop"
 	}
 
 	if retryName == "" {
