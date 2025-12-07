@@ -130,18 +130,37 @@ func TestNormalizeKubernetesVersion(t *testing.T) {
 		name     string
 		input    string
 		expected string
+		wantErr  bool
 	}{
-		{"Version with v prefix", "v1.31.11", "1.31.11"},
-		{"Version without v prefix", "1.31.11", "1.31.11"},
-		{"Version with V prefix uppercase", "V1.31.11", "1.31.11"},
-		{"Empty string", "", ""},
-		{"Just v", "v", ""},
+		{"Version with v prefix", "v1.31.11", "1.31.11", false},
+		{"Version without v prefix", "1.31.11", "1.31.11", false},
+		{"Version with V prefix uppercase", "V1.31.11", "1.31.11", false},
+		{"Version with suffix", "v1.31.11-rc.1", "1.31.11-rc.1", false},
+		{"Version with alpha suffix", "1.32.0-alpha.0", "1.32.0-alpha.0", false},
+		{"Empty string", "", "", false},
+		// Security tests - command injection attempts
+		{"Command injection with space", "1.31.11 --malicious-flag", "", true},
+		{"Command injection with semicolon", "1.31.11;malicious", "", true},
+		{"Command injection with pipe", "1.31.11|malicious", "", true},
+		{"Command injection with ampersand", "1.31.11&&malicious", "", true},
+		{"Command injection with backtick", "1.31.11`malicious`", "", true},
+		{"Command injection with dollar", "1.31.11$malicious", "", true},
+		{"Path traversal attempt", "../1.31.11", "", true},
+		{"Invalid format - no patch", "1.31", "", true},
+		{"Invalid format - extra dots", "1.31.11.12", "", true},
+		{"Invalid format - letters in version", "1.31.a1", "", true},
+		{"Just v", "v", "", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := normalizeKubernetesVersion(tt.input)
-			assert.Equal(t, tt.expected, got)
+			got, err := normalizeKubernetesVersion(tt.input)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expected, got)
+			}
 		})
 	}
 }

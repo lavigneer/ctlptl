@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -89,7 +90,10 @@ func (r *RancherDesktopManager) Start(ctx context.Context, cluster *api.Cluster)
 	// Apply Kubernetes version if specified
 	// Rancher Desktop expects versions without 'v' prefix
 	if cluster.KubernetesVersion != "" {
-		version := normalizeKubernetesVersion(cluster.KubernetesVersion)
+		version, err := normalizeKubernetesVersion(cluster.KubernetesVersion)
+		if err != nil {
+			return err
+		}
 		args = append(args, fmt.Sprintf("--kubernetes-version=%s", version))
 	}
 
@@ -193,12 +197,30 @@ func parseMemory(memory string) (int, error) {
 }
 
 // normalizeKubernetesVersion strips the 'v' or 'V' prefix from Kubernetes version if present
+// and validates the version format to prevent command injection
 // Rancher Desktop expects versions without the 'v' prefix
-func normalizeKubernetesVersion(version string) string {
-	if len(version) > 0 && (version[0] == 'v' || version[0] == 'V') {
-		return version[1:]
+func normalizeKubernetesVersion(version string) (string, error) {
+	if version == "" {
+		return "", nil
 	}
-	return version
+
+	// Strip v/V prefix
+	if version[0] == 'v' || version[0] == 'V' {
+		version = version[1:]
+	}
+
+	// Validate version format: X.Y.Z or X.Y.Z-suffix
+	// Only allow: digits, dots, hyphens, and alphanumerics in suffix
+	// This prevents command injection via spaces or special characters
+	matched, err := regexp.MatchString(`^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$`, version)
+	if err != nil {
+		return "", fmt.Errorf("error validating Kubernetes version: %v", err)
+	}
+	if !matched {
+		return "", fmt.Errorf("invalid Kubernetes version format: %s (expected format: 1.31.11 or v1.31.11-suffix)", version)
+	}
+
+	return version, nil
 }
 
 // waitForKubernetes waits for Kubernetes to be ready
