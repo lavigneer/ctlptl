@@ -280,7 +280,6 @@ func (c *Controller) admin(ctx context.Context, product clusterid.Product) (Admi
 			return nil, fmt.Errorf("Detected remote DOCKER_HOST. Remote Docker engines do not support Rancher Desktop clusters: %s",
 				dockerCLI.Client().DaemonHost())
 		}
-		// Ensure rmachine is initialized so we can access its rdm
 		if c.rmachine == nil {
 			machine, err := NewRancherMachine(ctx, dockerCLI.Client(), c.iostreams)
 			if err != nil {
@@ -459,7 +458,6 @@ func (c *Controller) populateClusterSpec(ctx context.Context, cluster *api.Clust
 	cluster.KindV1Alpha4Cluster = spec.KindV1Alpha4Cluster
 	cluster.Minikube = spec.Minikube
 	cluster.K3D = spec.K3D
-	// Note: Rancher Desktop doesn't have a specific config struct, so no need to copy it
 	return nil
 }
 
@@ -500,7 +498,6 @@ func (c *Controller) populateCluster(ctx context.Context, cluster *api.Cluster) 
 	// If this looks like it might be running on a remote Docker instance,
 	// ensure the socat tunnel is running. It's semantically odd that 'ctlptl get'
 	// creates a persistent tunnel, but is probably closer to what users expect.
-	// Note: Rancher Desktop runs locally, so it doesn't need socat tunneling.
 	name := cluster.Name
 	product := clusterid.Product(cluster.Product)
 	if product == clusterid.ProductKIND || product == clusterid.ProductK3D || product == clusterid.ProductMinikube {
@@ -510,7 +507,6 @@ func (c *Controller) populateCluster(ctx context.Context, cluster *api.Cluster) 
 			klog.V(4).Infof("WARNING: connecting socat tunnel to cluster %s: %v\n", name, err)
 		}
 	}
-	// Note: Rancher Desktop doesn't need socat tunneling as it runs locally
 
 	client, err := c.client(cluster.Name)
 	if err != nil {
@@ -730,8 +726,6 @@ func (c *Controller) Apply(ctx context.Context, desired *api.Cluster) (*api.Clus
 	if desired.K3D != nil && clusterid.Product(desired.Product) != clusterid.ProductK3D {
 		return nil, fmt.Errorf("k3d config may only be set on clusters with product: k3d. Actual product: %s", desired.Product)
 	}
-	// Note: Rancher Desktop doesn't have a specific config struct like KIND, Minikube, or K3D
-	// All configuration is done through the main Cluster fields like MinCPUs and KubernetesVersion
 
 	FillDefaults(desired)
 
@@ -826,7 +820,6 @@ func (c *Controller) Apply(ctx context.Context, desired *api.Cluster) (*api.Clus
 	if needsCreate {
 		// If the cluster apiserver is in a remote docker cluster,
 		// set up a portforwarder.
-		// Note: Rancher Desktop runs locally, so it doesn't need port forwarding.
 		err := c.maybeCreateForwarderForCurrentCluster(ctx, c.iostreams.ErrOut)
 		if err != nil {
 			return nil, err
@@ -1061,7 +1054,6 @@ func (c *Controller) List(ctx context.Context, options ListOptions) (*api.Cluste
 
 // If the current cluster is on a remote docker instance,
 // we need a port-forwarder to connect it.
-// Note: Rancher Desktop runs locally, so it doesn't need port forwarding.
 func (c *Controller) maybeCreateForwarderForCurrentCluster(ctx context.Context, errOut io.Writer) error {
 	dockerCLI, err := c.getDockerCLI(ctx)
 	if err != nil {
@@ -1178,7 +1170,6 @@ func (c *Controller) waitForHealthCheckAfterCreate(ctx context.Context, cluster 
 // the cluster from a container attached to the same network as the cluster, if
 // currently running inside a container and the cluster admin object supports
 // the modifications.
-// Note: Rancher Desktop runs locally, so it doesn't need this modification.
 func (c *Controller) maybeFixKubeConfigInsideContainer(ctx context.Context, cluster *api.Cluster) error {
 	containerID := insideContainer(ctx, c.dockerCLI.Client())
 	if containerID == "" {

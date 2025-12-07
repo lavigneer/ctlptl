@@ -10,9 +10,6 @@ import (
 	"github.com/tilt-dev/ctlptl/pkg/rancher"
 )
 
-// rancherDesktopAdmin manages the Kubernetes cluster for RancherDesktop.
-// This implementation uses the improved RancherDesktopManager which leverages
-// rdctl's more efficient startup flags.
 type rancherDesktopAdmin struct {
 	os     string
 	host   string
@@ -24,7 +21,6 @@ func newRancherDesktopAdmin(host string, os string, rdm RancherManager) *rancher
 }
 
 func (a *rancherDesktopAdmin) EnsureInstalled(ctx context.Context) error {
-	// RancherDesktopManager constructor already verifies rdctl is available
 	return nil
 }
 
@@ -43,8 +39,6 @@ func (a *rancherDesktopAdmin) Create(ctx context.Context, desired *api.Cluster, 
 			a.host)
 	}
 
-	// Start Rancher Desktop with the desired configuration
-	// The manager will handle starting with the right settings and waiting for Kubernetes
 	err := a.rdm.Start(ctx, desired)
 	if err != nil {
 		return fmt.Errorf("failed to start Rancher Desktop: %v", err)
@@ -63,6 +57,5 @@ func (a *rancherDesktopAdmin) Delete(ctx context.Context, config *api.Cluster) e
 		return fmt.Errorf("rancher-desktop cannot be deleted from DOCKER_HOST: %s", a.host)
 	}
 
-	// Reset cluster to disable Kubernetes (no-op if already disabled)
 	return a.rdm.ResetCluster(ctx)
 }

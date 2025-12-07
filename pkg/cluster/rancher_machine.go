@@ -70,6 +70,3 @@ func (m *rancherMachine) Restart(ctx context.Context, desired, existing *api.Clu
 	}
 	return m.rdm.Start(ctx, desired)
 }
-
-// Apply method is not part of the Machine interface, so we'll remove it
-// The cluster controller handles the Apply logic
