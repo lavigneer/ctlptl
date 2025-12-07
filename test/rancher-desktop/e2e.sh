@@ -8,7 +8,7 @@ set -exo pipefail
 export DOCKER_BUILDKIT="1"
 
 cd $(dirname $(realpath $0))
-CLUSTER_NAME="kind-ctlptl-test-cluster"
+CLUSTER_NAME="rancher-desktop"
 ctlptl apply -f cluster.yaml
 
 # The ko-builder runs in an image tagged with the host as visible from the local machine.

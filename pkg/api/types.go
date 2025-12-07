@@ -44,6 +44,17 @@ type Cluster struct {
 	// CPU, it will return an error.
 	MinCPUs int `json:"minCPUs,omitempty" yaml:"minCPUs,omitempty"`
 
+	// The desired amount of memory (RAM) to allocate to the cluster.
+	//
+	// Examples:
+	// 4GB
+	// 8GB
+	// 2048MB
+	//
+	// This is mostly helpful for clusters that run in a VM (Docker Desktop,
+	// Rancher Desktop). Not supported on all cluster products.
+	Memory string `json:"memory,omitempty" yaml:"memory,omitempty"`
+
 	// The name of a registry.
 	//
 	// If the registry doesn't exist, ctlptl will create one with this name.

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
 	klog "k8s.io/klog/v2"
-	
+
 	"github.com/tilt-dev/ctlptl/pkg/api"
 )
 
@@ -66,18 +68,29 @@ func (r *RancherDesktopManager) Status(ctx context.Context) (map[string]interfac
 func (r *RancherDesktopManager) Start(ctx context.Context, cluster *api.Cluster) error {
 	// Build command with options
 	args := []string{"start"}
-	
+
 	// Always enable Kubernetes for ctlptl
 	args = append(args, "--kubernetes-enabled=true")
-	
+
 	// Apply CPU settings
 	if cluster.MinCPUs > 0 {
 		args = append(args, fmt.Sprintf("--virtual-machine.number-cpus=%d", cluster.MinCPUs))
 	}
 
+	// Apply memory settings
+	if cluster.Memory != "" {
+		memGB, err := parseMemory(cluster.Memory)
+		if err != nil {
+			return err
+		}
+		args = append(args, fmt.Sprintf("--virtual-machine.memory-in-gb=%d", memGB))
+	}
+
 	// Apply Kubernetes version if specified
+	// Rancher Desktop expects versions without 'v' prefix
 	if cluster.KubernetesVersion != "" {
-		args = append(args, fmt.Sprintf("--kubernetes-version=%s", cluster.KubernetesVersion))
+		version := normalizeKubernetesVersion(cluster.KubernetesVersion)
+		args = append(args, fmt.Sprintf("--kubernetes-version=%s", version))
 	}
 
 	// Add background option to avoid blocking
@@ -138,6 +151,54 @@ func (r *RancherDesktopManager) IsKubernetesRunning(ctx context.Context) (bool, 
 	
 	state, ok := kubeMap["state"].(string)
 	return ok && state == "running", nil
+}
+
+// parseMemory converts memory strings like "4GB", "8GB", "2048MB" to GB as an integer
+func parseMemory(memory string) (int, error) {
+	memory = strings.TrimSpace(strings.ToUpper(memory))
+
+	if strings.HasSuffix(memory, "GB") {
+		gb, err := strconv.Atoi(strings.TrimSuffix(memory, "GB"))
+		if err != nil {
+			return 0, fmt.Errorf("invalid memory format: %s", memory)
+		}
+		if gb <= 0 {
+			return 0, fmt.Errorf("memory must be positive: %s", memory)
+		}
+		return gb, nil
+	}
+
+	if strings.HasSuffix(memory, "MB") {
+		mb, err := strconv.Atoi(strings.TrimSuffix(memory, "MB"))
+		if err != nil {
+			return 0, fmt.Errorf("invalid memory format: %s", memory)
+		}
+		if mb <= 0 {
+			return 0, fmt.Errorf("memory must be positive: %s", memory)
+		}
+		// Convert MB to GB, rounding up
+		gb := (mb + 1023) / 1024
+		return gb, nil
+	}
+
+	// Try parsing as a plain number (assume GB)
+	gb, err := strconv.Atoi(memory)
+	if err != nil {
+		return 0, fmt.Errorf("invalid memory format: %s (expected formats: 4GB, 8GB, 2048MB)", memory)
+	}
+	if gb <= 0 {
+		return 0, fmt.Errorf("memory must be positive: %s", memory)
+	}
+	return gb, nil
+}
+
+// normalizeKubernetesVersion strips the 'v' or 'V' prefix from Kubernetes version if present
+// Rancher Desktop expects versions without the 'v' prefix
+func normalizeKubernetesVersion(version string) string {
+	if len(version) > 0 && (version[0] == 'v' || version[0] == 'V') {
+		return version[1:]
+	}
+	return version
 }
 
 // waitForKubernetes waits for Kubernetes to be ready

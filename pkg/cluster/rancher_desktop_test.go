@@ -93,3 +93,55 @@ func TestRancherDesktopAdmin_EnsureInstalled(t *testing.T) {
 	err = admin.EnsureInstalled(ctx)
 	assert.NoError(t, err)
 }
+
+func TestParseMemory(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected int
+		wantErr  bool
+	}{
+		{"GB format", "4GB", 4, false},
+		{"GB format lowercase", "4gb", 4, false},
+		{"GB format with space", " 8GB ", 8, false},
+		{"MB to GB conversion", "2048MB", 2, false},
+		{"MB to GB rounding up", "3000MB", 3, false},
+		{"Plain number", "6", 6, false},
+		{"Invalid format", "invalid", 0, true},
+		{"Empty string", "", 0, true},
+		{"Negative number", "-4GB", 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseMemory(tt.input)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expected, got)
+			}
+		})
+	}
+}
+
+func TestNormalizeKubernetesVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"Version with v prefix", "v1.31.11", "1.31.11"},
+		{"Version without v prefix", "1.31.11", "1.31.11"},
+		{"Version with V prefix uppercase", "V1.31.11", "1.31.11"},
+		{"Empty string", "", ""},
+		{"Just v", "v", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeKubernetesVersion(tt.input)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}

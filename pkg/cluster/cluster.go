@@ -48,6 +48,10 @@ import (
 
 const clusterSpecConfigMap = "ctlptl-cluster-spec"
 
+// ProductRancherDesktop is the product identifier for Rancher Desktop clusters.
+// This is a local constant since clusterid.Product is an external package.
+const ProductRancherDesktop = "rancher-desktop"
+
 var typeMeta = api.TypeMeta{APIVersion: "ctlptl.dev/v1alpha1", Kind: "Cluster"}
 var listTypeMeta = api.TypeMeta{APIVersion: "ctlptl.dev/v1alpha1", Kind: "ClusterList"}
 var groupResource = schema.GroupResource{Group: "ctlptl.dev", Resource: "clusters"}
@@ -209,9 +213,16 @@ func (c *Controller) machine(ctx context.Context, name string, product clusterid
 			c.dmachine = machine
 		}
 		return newMinikubeMachine(c.iostreams, c.runner, name, c.dmachine), nil
-	
-	case "rancher-desktop":
-		return NewRancherMachine(ctx, dockerCLI.Client(), c.iostreams)
+
+	case ProductRancherDesktop:
+		if c.rmachine == nil {
+			machine, err := NewRancherMachine(ctx, dockerCLI.Client(), c.iostreams)
+			if err != nil {
+				return nil, err
+			}
+			c.rmachine = machine
+		}
+		return c.rmachine, nil
 	}
 
 	return unknownMachine{product: product}, nil
@@ -264,16 +275,20 @@ func (c *Controller) admin(ctx context.Context, product clusterid.Product) (Admi
 		admin = newK3DAdmin(c.iostreams, c.runner)
 	case clusterid.ProductMinikube:
 		admin = newMinikubeAdmin(c.iostreams, dockerCLI.Client(), c.runner)
-	case "rancher-desktop": // TODO: Use clusterid.ProductRancherDesktop when available
+	case ProductRancherDesktop:
 		if !rancher.IsLocalRancherDesktop(dockerCLI.Client().DaemonHost(), c.os) {
 			return nil, fmt.Errorf("Detected remote DOCKER_HOST. Remote Docker engines do not support Rancher Desktop clusters: %s",
 				dockerCLI.Client().DaemonHost())
 		}
-		rdm, err := NewRancherDesktopManager()
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Rancher Desktop manager: %v", err)
+		// Ensure rmachine is initialized so we can access its rdm
+		if c.rmachine == nil {
+			machine, err := NewRancherMachine(ctx, dockerCLI.Client(), c.iostreams)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create Rancher Desktop machine: %v", err)
+			}
+			c.rmachine = machine
 		}
-		admin = newRancherDesktopAdmin(dockerCLI.Client().DaemonHost(), c.os, rdm)
+		admin = newRancherDesktopAdmin(dockerCLI.Client().DaemonHost(), c.os, c.rmachine.rdm)
 	}
 
 	if product == "" {
@@ -578,11 +593,11 @@ func FillDefaults(cluster *api.Cluster) {
 func supportsRegistry(product clusterid.Product) bool {
 	return product == clusterid.ProductKIND || product == clusterid.ProductMinikube || product == clusterid.ProductK3D
 	// TODO: Enable registry support for Rancher Desktop once implemented
-	// || product == "rancher-desktop"
+	// || product == ProductRancherDesktop
 }
 
 func supportsKubernetesVersion(product clusterid.Product, version string) bool {
-	return product == clusterid.ProductKIND || product == clusterid.ProductMinikube || product == "rancher-desktop"
+	return product == clusterid.ProductKIND || product == clusterid.ProductMinikube || product == ProductRancherDesktop
 }
 
 func (c *Controller) canReconcileK8sVersion(ctx context.Context, desired, existing *api.Cluster) bool {
@@ -595,7 +610,7 @@ func (c *Controller) canReconcileK8sVersion(ctx context.Context, desired, existi
 	}
 
 	// On KIND and Rancher Desktop, it's ok if the patch doesn't match.
-	if clusterid.Product(desired.Product) == clusterid.ProductKIND || clusterid.Product(desired.Product) == "rancher-desktop" {
+	if clusterid.Product(desired.Product) == clusterid.ProductKIND || clusterid.Product(desired.Product) == ProductRancherDesktop {
 		dv, err := semver.ParseTolerant(desired.KubernetesVersion)
 		if err != nil {
 			return false
@@ -675,10 +690,10 @@ func (c *Controller) ensureRegistryExistsForCluster(ctx context.Context, desired
 		regLabels["app"] = "k3d"
 		regLabels["k3d.role"] = "registry"
 			// TODO: Add Rancher Desktop registry support once implemented
-		// } else if desired.Product == "rancher-desktop" {
+		// } else if desired.Product == ProductRancherDesktop {
 		// 	// Rancher Desktop registries don't need special labels
 		// 	// but we'll add a label for identification
-		// 	regLabels["app"] = "rancher-desktop"
+		// 	regLabels["app"] = ProductRancherDesktop
 		// }
 	}
 

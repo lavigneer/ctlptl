@@ -23,6 +23,8 @@ kind: Cluster
 name: rancher-desktop
 product: rancher-desktop
 minCPUs: 4
+memory: 8GB
+kubernetesVersion: v1.31.11
 ```
 
 Apply the configuration:
@@ -38,6 +40,8 @@ ctlptl apply -f cluster.yaml
 - `name`: The name of the cluster (defaults to "rancher-desktop")
 - `product`: Must be set to "rancher-desktop"
 - `minCPUs`: Minimum number of CPUs to allocate to the VM (default: 2)
+- `memory`: Amount of RAM to allocate to the VM (e.g., "4GB", "8GB", "2048MB")
+- `kubernetesVersion`: Kubernetes version to use (with or without 'v' prefix)
 
 ### Advanced Configuration
 
@@ -46,14 +50,20 @@ apiVersion: ctlptl.dev/v1alpha1
 kind: Cluster
 name: rancher-desktop-advanced
 product: rancher-desktop
-minCPUs: 4
-kubernetesVersion: v1.31.1
+minCPUs: 6
+memory: 8GB
+kubernetesVersion: v1.31.11
 ```
 
 ### Supported Options
 
 - **minCPUs**: Configures the number of CPUs allocated to the Rancher Desktop VM
-- **kubernetesVersion**: Specifies the Kubernetes version to use (e.g., "v1.31.1")
+- **memory**: Configures the amount of RAM allocated to the Rancher Desktop VM
+  - Supported formats: `4GB`, `8GB`, `2048MB` (plain numbers assumed to be GB)
+  - Example: `memory: 8GB`
+- **kubernetesVersion**: Specifies the Kubernetes version to use
+  - Accepts versions with or without 'v' prefix (e.g., "v1.31.11" or "1.31.11")
+  - The 'v' prefix will be automatically stripped as Rancher Desktop expects versions without it
 
 ### Unsupported Options
 
@@ -89,7 +99,7 @@ ctlptl integrates with Rancher Desktop using the `rdctl` command-line tool to:
 
 1. **Start Rancher Desktop**: Automatically starts Rancher Desktop with the specified configuration
 2. **Configure Kubernetes**: Enables Kubernetes and sets the desired version
-3. **Manage Resources**: Configures CPU allocation for the VM
+3. **Manage Resources**: Configures CPU and memory allocation for the VM
 4. **Monitor Status**: Tracks the cluster's health and status
 
 ## Troubleshooting

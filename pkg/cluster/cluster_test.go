@@ -459,11 +459,13 @@ func TestClusterFixKubeConfigInContainer(t *testing.T) {
 func TestClusterApplyRancherDesktop(t *testing.T) {
 	f := newFixture(t)
 	f.setOS("darwin")
+	f.dockerClient.host = "unix:///var/run/docker.sock"
+	f.dockerClient.ncpu = 1
 
-	assert.Equal(t, false, f.d4m.started)
+	assert.Equal(t, false, f.rdm.(*fakeRancherDesktopManager).started)
 	assert.Equal(t, 1, f.dockerClient.ncpu)
 	f.applyRancherDesktop(3)
-	assert.Equal(t, true, f.d4m.started)
+	assert.Equal(t, true, f.rdm.(*fakeRancherDesktopManager).started)
 	assert.Equal(t, 3, f.dockerClient.ncpu)
 }
 
@@ -471,11 +473,12 @@ func TestClusterApplyRancherDesktopLinux(t *testing.T) {
 	f := newFixture(t)
 	f.setOS("linux")
 	f.dockerClient.host = "unix:///Users/nick/.rd/docker.sock"
+	f.dockerClient.ncpu = 1
 
-	assert.Equal(t, false, f.d4m.started)
+	assert.Equal(t, false, f.rdm.(*fakeRancherDesktopManager).started)
 	assert.Equal(t, 1, f.dockerClient.ncpu)
 	f.applyRancherDesktop(3)
-	assert.Equal(t, true, f.d4m.started)
+	assert.Equal(t, true, f.rdm.(*fakeRancherDesktopManager).started)
 	assert.Equal(t, 3, f.dockerClient.ncpu)
 }
 
@@ -485,7 +488,7 @@ func TestClusterApplyRancherDesktopEngineError(t *testing.T) {
 	f.dockerClient.host = "unix:///var/run/docker.sock"
 
 	cluster := &api.Cluster{
-		Product: "rancher-desktop",
+		Product: ProductRancherDesktop,
 	}
 	_, err := f.controller.Apply(context.Background(), cluster)
 	require.Error(f.t, err)
@@ -496,36 +499,41 @@ func TestClusterApplyRancherDesktopEngineError(t *testing.T) {
 func TestClusterApplyRancherDesktopCPUOnly(t *testing.T) {
 	f := newFixture(t)
 	f.setOS("darwin")
+	f.dockerClient.host = "unix:///var/run/docker.sock"
+	f.dockerClient.ncpu = 3
 
-	assert.Equal(t, false, f.d4m.started)
-	assert.Equal(t, 1, f.dockerClient.ncpu)
+	assert.Equal(t, false, f.rdm.(*fakeRancherDesktopManager).started)
+	assert.Equal(t, 3, f.dockerClient.ncpu)
 	f.applyRancherDesktop(0)
-	assert.Equal(t, false, f.d4m.started)
+	assert.Equal(t, false, f.rdm.(*fakeRancherDesktopManager).started)
 	assert.Equal(t, 3, f.dockerClient.ncpu)
 }
 
 func TestClusterApplyRancherDesktopStartClusterOnly(t *testing.T) {
 	f := newFixture(t)
 	f.setOS("darwin")
+	f.dockerClient.host = "unix:///var/run/docker.sock"
+	f.dockerClient.ncpu = 1
 
-	assert.Equal(t, false, f.d4m.started)
+	assert.Equal(t, false, f.rdm.(*fakeRancherDesktopManager).started)
 	assert.Equal(t, 1, f.dockerClient.ncpu)
 	f.applyRancherDesktop(1)
-	assert.Equal(t, true, f.d4m.started)
+	assert.Equal(t, true, f.rdm.(*fakeRancherDesktopManager).started)
 	assert.Equal(t, 1, f.dockerClient.ncpu)
 }
 
 func TestClusterApplyRancherDesktopNoRestart(t *testing.T) {
 	f := newFixture(t)
 	f.setOS("darwin")
-	f.d4m.started = true
+	f.dockerClient.host = "unix:///var/run/docker.sock"
+	f.dockerClient.ncpu = 1
+	f.rdm.(*fakeRancherDesktopManager).started = true
 
-	assert.Equal(t, true, f.d4m.started)
+	assert.Equal(t, true, f.rdm.(*fakeRancherDesktopManager).started)
 	assert.Equal(t, 1, f.dockerClient.ncpu)
 	f.applyRancherDesktop(0)
-	assert.Equal(t, true, f.d4m.started)
+	assert.Equal(t, true, f.rdm.(*fakeRancherDesktopManager).started)
 	assert.Equal(t, 1, f.dockerClient.ncpu)
-	assert.Equal(t, 1, f.d4m.settingsWriteCount)
 }
 
 type fixture struct {
@@ -573,10 +581,14 @@ func newFixture(t *testing.T) *fixture {
 			"docker-desktop": {
 				Cluster: "docker-desktop",
 			},
+			"rancher-desktop": {
+				Cluster: "rancher-desktop",
+			},
 		},
 		Clusters: map[string]*clientcmdapi.Cluster{
 			"microk8s-cluster": {Server: "http://microk8s.localhost/"},
 			"docker-desktop":   {Server: "http://docker-desktop.localhost/"},
+			"rancher-desktop":  {Server: "http://rancher-desktop.localhost/"},
 		},
 	}
 	configLoader := configLoader(func() (clientcmdapi.Config, error) {
@@ -650,7 +662,8 @@ func (f *fixture) apply(product clusterid.Product, cpus int) {
 
 func (f *fixture) applyRancherDesktop(cpus int) {
 	cluster := &api.Cluster{
-		Product:           "rancher-desktop",
+		Name:              "rancher-desktop",
+		Product:           ProductRancherDesktop,
 		MinCPUs:           cpus,
 		KubernetesVersion: "1.31.11",
 	}

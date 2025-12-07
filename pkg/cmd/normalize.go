@@ -7,6 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/tilt-dev/ctlptl/pkg/api"
+	"github.com/tilt-dev/ctlptl/pkg/cluster"
 )
 
 type clusterGetter interface {
@@ -34,8 +35,8 @@ func normalizedGet(ctx context.Context, controller clusterGetter, name string) (
 		retryName = clusterid.ProductKIND.DefaultClusterName()
 	} else if name == string(clusterid.ProductK3D) {
 		retryName = clusterid.ProductK3D.DefaultClusterName()
-	} else if name == "rancher-desktop" {
-		retryName = "rancher-desktop"
+	} else if name == cluster.ProductRancherDesktop {
+		retryName = cluster.ProductRancherDesktop
 	}
 
 	if retryName == "" {
